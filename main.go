@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -15,8 +16,8 @@ import (
 
 const mongouri = "mongodb://localhost:27017/api"
 const kafkabootstrapservers = "192.168.1.201"
-const mongodatabase = "myapp_development"
-const mongocollection = "sources"
+const mongodatabase = "spog_development"
+const mongocollection = "alertsources"
 
 func main() {
 	fmt.Println("\n\x1b[32mStarting Alert API Server.....\x1b[0m\n")
@@ -70,7 +71,7 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		Handler(w, r, client , p )
 	 })
-	http.ListenAndServe(":8080", nil)
+	http.ListenAndServe(":8082", nil)
 }
 
 func Handler(w http.ResponseWriter, r *http.Request, client *mongo.Client , p *kafka.Producer) {
@@ -83,8 +84,8 @@ func Handler(w http.ResponseWriter, r *http.Request, client *mongo.Client , p *k
 	intKey := r.URL.Query().Get("Api-Token")
 	fmt.Println("GET params were:", r.URL.Query())
 	coll1 := client.Database(mongodatabase).Collection(mongocollection)
-	filter := bson.D{{ Key: "source", Value: intKey }}
-	fmt.Println("The Source is " , intKey)
+	filter := bson.D{{ Key: "alertsourcekey", Value: intKey }}
+	fmt.Println("The IntKey is " , intKey)
 
 	type Error struct{
 		Errorstatus bool `json:"error"`
@@ -98,19 +99,24 @@ func Handler(w http.ResponseWriter, r *http.Request, client *mongo.Client , p *k
 	if err1 != nil {
 		fmt.Println("DB error is ",err1)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(&Error{true, "Unknown Client" })
 		return
 	}
 
 
-    if intKey == result["source"] {
+    if intKey == result["alertsourcekey"] {
+		fmt.Println("The Source is " , result["alertsourcename"])
+		headers := []kafka.Header{
+			{Key: "AlertKey", Value: []byte(result["alertsourcekey"].(string))},
+		}
 		fmt.Println(string(body))
 		if IsValidJSON(string(body)){
-			topic := intKey
+			topic := "Events"
 			p.Produce(&kafka.Message{
 				TopicPartition: kafka.TopicPartition{Topic: &topic},
 				Value:          body,
+				Headers:        headers,
 			}, nil)
 			w.WriteHeader(http.StatusCreated)
 			w.Write(body)
@@ -119,6 +125,10 @@ func Handler(w http.ResponseWriter, r *http.Request, client *mongo.Client , p *k
 			w.WriteHeader(http.StatusBadRequest)
 			w.Write(body)
 		}
+	}else{
+		fmt.Println("Unauthorized")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write(body)
 	}
 }
 
